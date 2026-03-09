@@ -22,32 +22,48 @@ import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { HarnessInfo } from "../../types";
 
 /* ─── Install command map (mirrors backend harness definitions) ─── */
-const INSTALL_COMMANDS: Record<string, string> = {
-  codex: "npm install -g @openai/codex",
-  "claude-code": "npm install -g @anthropic-ai/claude-code",
-  "gemini-cli": "npm install -g @google/gemini-cli",
+const NPM_INSTALL_COMMANDS: Record<string, string> = {
+  codex: "@openai/codex",
+  "claude-code": "@anthropic-ai/claude-code",
+  "gemini-cli": "@google/gemini-cli",
+  opencode: "opencode",
+  "kilo-code": "kilo-code",
+};
+
+const SCRIPT_INSTALL_COMMANDS: Record<string, string> = {
   kiro: "curl -fsSL https://cli.kiro.dev/install | bash",
-  opencode: "npm install -g opencode",
-  "kilo-code": "npm install -g kilo-code",
   "factory-droid": "curl -fsSL https://app.factory.ai/cli | sh",
 };
+
+function installCommandFor(harnessId: string, preferredInstallMethod: string | null): string | null {
+  const npmPackage = NPM_INSTALL_COMMANDS[harnessId];
+  if (npmPackage) {
+    if (preferredInstallMethod === "mise") {
+      return `mise use -g npm:${npmPackage}`;
+    }
+    return `npm install -g ${npmPackage}`;
+  }
+
+  return SCRIPT_INSTALL_COMMANDS[harnessId] ?? null;
+}
 
 /* ─── Harness tile ─── */
 function HarnessTile({
   harness,
   description,
+  installCommand,
   onInstallInTerminal,
   onCopyCommand,
   onLaunch,
 }: {
   harness: HarnessInfo;
   description: string;
+  installCommand: string | null;
   onInstallInTerminal: () => void;
   onCopyCommand: () => void;
   onLaunch: () => void;
 }) {
   const { t } = useTranslation("app");
-  const installCmd = INSTALL_COMMANDS[harness.id];
 
   return (
     <div className={`hp-tile${harness.native ? " hp-tile-native" : ""}${harness.found ? " hp-tile-installed" : ""}`}>
@@ -78,13 +94,13 @@ function HarnessTile({
             <Play size={11} />
             {t("harnesses.launch")}
           </button>
-        ) : installCmd ? (
+        ) : installCommand ? (
           <div className="hp-tile-action-group">
             <button
               type="button"
               className="hp-btn hp-btn-copy"
               onClick={onCopyCommand}
-              title={installCmd}
+              title={installCommand}
             >
               <ClipboardCopy size={11} />
             </button>
@@ -111,6 +127,7 @@ export function HarnessPanel() {
   const error = useHarnessStore((s) => s.error);
   const scan = useHarnessStore((s) => s.scan);
   const launch = useHarnessStore((s) => s.launch);
+  const preferredInstallMethod = useHarnessStore((s) => s.preferredInstallMethod);
 
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
@@ -146,12 +163,12 @@ export function HarnessPanel() {
   }
 
   function handleInstallInTerminal(harnessId: string) {
-    const cmd = INSTALL_COMMANDS[harnessId];
+    const cmd = installCommandFor(harnessId, preferredInstallMethod);
     if (cmd) void spawnInTerminal(cmd);
   }
 
   function handleCopyCommand(harnessId: string) {
-    const cmd = INSTALL_COMMANDS[harnessId];
+    const cmd = installCommandFor(harnessId, preferredInstallMethod);
     if (cmd) {
       void copyTextToClipboard(cmd)
         .then(() => {
@@ -228,6 +245,7 @@ export function HarnessPanel() {
                   key={h.id}
                   harness={h}
                   description={t(`harnesses.descriptions.${h.id}`, { defaultValue: h.description })}
+                  installCommand={installCommandFor(h.id, preferredInstallMethod)}
                   onInstallInTerminal={() => handleInstallInTerminal(h.id)}
                   onCopyCommand={() => handleCopyCommand(h.id)}
                   onLaunch={() => void handleLaunch(h.id)}

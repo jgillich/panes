@@ -49,6 +49,18 @@ pub async fn install_dependency(
                 resolve_brew_path().ok_or_else(|| "homebrew executable not found".to_string())?;
             (brew, vec!["install".to_string(), "node".to_string()])
         }
+        ("node", "mise") => (
+            resolve_mise_path().await,
+            vec!["use".to_string(), "-g".to_string(), "node@20".to_string()],
+        ),
+        ("codex", "mise_npm") => (
+            resolve_mise_path().await,
+            vec![
+                "use".to_string(),
+                "-g".to_string(),
+                "npm:@openai/codex".to_string(),
+            ],
+        ),
         ("codex", "npm_global") => {
             let npm = resolve_npm_path().await;
             (
@@ -98,7 +110,18 @@ async fn detect_node() -> DepStatus {
     }
 
     // Not found — check if we can auto-install
+    let has_mise = runtime_env::resolve_executable("mise").is_some();
     let has_homebrew = resolve_brew_path().is_some();
+
+    if runtime_env::is_flatpak() && has_mise {
+        return DepStatus {
+            found: false,
+            version: None,
+            path: None,
+            can_auto_install: true,
+            install_method: Some("mise".to_string()),
+        };
+    }
 
     DepStatus {
         found: false,
@@ -156,6 +179,16 @@ async fn detect_codex() -> DepStatus {
             path: Some(executable.display().to_string()),
             can_auto_install: false,
             install_method: None,
+        };
+    }
+
+    if runtime_env::is_flatpak() && runtime_env::resolve_executable("mise").is_some() {
+        return DepStatus {
+            found: false,
+            version: None,
+            path: None,
+            can_auto_install: true,
+            install_method: Some("mise_npm".to_string()),
         };
     }
 
@@ -375,11 +408,24 @@ async fn resolve_npm_path() -> String {
     "npm".to_string()
 }
 
+async fn resolve_mise_path() -> String {
+    if let Some(path) = runtime_env::resolve_executable("mise") {
+        return path.display().to_string();
+    }
+    if let Some((path, _version)) = detect_via_login_shell("mise", "--version").await {
+        return path;
+    }
+    "mise".to_string()
+}
+
 async fn detect_package_managers(node_found: bool) -> Vec<String> {
     let mut package_managers = Vec::new();
 
     #[cfg(not(target_os = "windows"))]
     {
+        if runtime_env::resolve_executable("mise").is_some() {
+            package_managers.push("mise".to_string());
+        }
         if resolve_brew_path().is_some() {
             package_managers.push("homebrew".to_string());
         }

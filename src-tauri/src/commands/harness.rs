@@ -17,10 +17,9 @@ struct HarnessDef {
     description: &'static str,
     command: &'static str,
     version_flag: &'static str,
-    install_command: Option<&'static str>,
-    install_args: &'static [&'static str],
+    npm_package: Option<&'static str>,
     /// Raw shell script for install (used for curl-pipe installers).
-    /// Takes precedence over `install_command` when set.
+    /// Takes precedence over `npm_package` when set.
     install_script: Option<&'static str>,
     website: &'static str,
     native: bool,
@@ -33,8 +32,7 @@ const HARNESSES: &[HarnessDef] = &[
         description: "Natively integrated — powers the Panes chat engine",
         command: "codex",
         version_flag: "--version",
-        install_command: Some("npm"),
-        install_args: &["install", "-g", "@openai/codex"],
+        npm_package: Some("@openai/codex"),
         install_script: None,
         website: "https://github.com/openai/codex",
         native: true,
@@ -45,8 +43,7 @@ const HARNESSES: &[HarnessDef] = &[
         description: "Anthropic's agentic coding tool",
         command: "claude",
         version_flag: "--version",
-        install_command: Some("npm"),
-        install_args: &["install", "-g", "@anthropic-ai/claude-code"],
+        npm_package: Some("@anthropic-ai/claude-code"),
         install_script: None,
         website: "https://docs.anthropic.com/en/docs/claude-code",
         native: false,
@@ -57,8 +54,7 @@ const HARNESSES: &[HarnessDef] = &[
         description: "Google's AI-powered command-line coding agent",
         command: "gemini",
         version_flag: "--version",
-        install_command: Some("npm"),
-        install_args: &["install", "-g", "@google/gemini-cli"],
+        npm_package: Some("@google/gemini-cli"),
         install_script: None,
         website: "https://github.com/google-gemini/gemini-cli",
         native: false,
@@ -69,8 +65,7 @@ const HARNESSES: &[HarnessDef] = &[
         description: "AI-powered CLI coding agent by AWS",
         command: "kiro-cli",
         version_flag: "--version",
-        install_command: None,
-        install_args: &[],
+        npm_package: None,
         install_script: Some("curl -fsSL https://cli.kiro.dev/install | bash"),
         website: "https://kiro.dev",
         native: false,
@@ -81,8 +76,7 @@ const HARNESSES: &[HarnessDef] = &[
         description: "Open-source AI coding assistant",
         command: "opencode",
         version_flag: "--version",
-        install_command: Some("npm"),
-        install_args: &["install", "-g", "opencode"],
+        npm_package: Some("opencode"),
         install_script: None,
         website: "https://opencode.ai",
         native: false,
@@ -93,8 +87,7 @@ const HARNESSES: &[HarnessDef] = &[
         description: "AI-powered code assistant",
         command: "kilo",
         version_flag: "--version",
-        install_command: Some("npm"),
-        install_args: &["install", "-g", "kilo-code"],
+        npm_package: Some("kilo-code"),
         install_script: None,
         website: "https://kilocode.ai",
         native: false,
@@ -105,8 +98,7 @@ const HARNESSES: &[HarnessDef] = &[
         description: "Autonomous coding agent by Factory",
         command: "droid",
         version_flag: "--version",
-        install_command: None,
-        install_args: &[],
+        npm_package: None,
         install_script: Some("curl -fsSL https://app.factory.ai/cli | sh"),
         website: "https://factory.ai",
         native: false,
@@ -126,12 +118,23 @@ pub async fn check_harnesses() -> Result<HarnessReport, String> {
         harnesses.push(status);
     }
 
-    let npm_available = runtime_env::resolve_executable("npm").is_some()
+    let npm_available = runtime_env::resolve_executable("mise").is_some()
+        || runtime_env::resolve_executable("npm").is_some()
         || detect_via_login_shell("npm", "--version").await.is_some();
+    let preferred_install_method = if runtime_env::is_flatpak()
+        && runtime_env::resolve_executable("mise").is_some()
+    {
+        Some("mise".to_string())
+    } else if npm_available {
+        Some("npm".to_string())
+    } else {
+        None
+    };
 
     Ok(HarnessReport {
         harnesses,
         npm_available,
+        preferred_install_method,
     })
 }
 
@@ -146,27 +149,39 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
         .find(|h| h.id == harness_id)
         .ok_or_else(|| format!("unknown harness: {harness_id}"))?;
 
-    // Prefer install_script (curl-pipe installers) over install_command (npm)
+    // Prefer install_script (curl-pipe installers) over npm package installs.
     if let Some(script) = def.install_script {
         return run_harness_install_script(&app, &harness_id, script).await;
     }
 
-    let install_cmd = def.install_command.ok_or_else(|| {
+    let npm_package = def.npm_package.ok_or_else(|| {
         format!(
             "{} must be installed manually from {}",
             def.name, def.website
         )
     })?;
 
-    let npm = if install_cmd == "npm" {
-        resolve_npm_path().await
+    let (program, args) = if runtime_env::is_flatpak() && runtime_env::resolve_executable("mise").is_some() {
+        (
+            resolve_mise_path().await,
+            vec![
+                "use".to_string(),
+                "-g".to_string(),
+                format!("npm:{npm_package}"),
+            ],
+        )
     } else {
-        install_cmd.to_string()
+        (
+            resolve_npm_path().await,
+            vec![
+                "install".to_string(),
+                "-g".to_string(),
+                npm_package.to_string(),
+            ],
+        )
     };
 
-    let args: Vec<String> = def.install_args.iter().map(|s| s.to_string()).collect();
-
-    run_harness_install(&app, &harness_id, &npm, &args).await
+    run_harness_install(&app, &harness_id, &program, &args).await
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +214,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
                 found: true,
                 version: Some(version),
                 path: Some(path.display().to_string()),
-                can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
+                can_auto_install: def.npm_package.is_some() || def.install_script.is_some(),
                 website: def.website.to_string(),
                 native: def.native,
             };
@@ -215,7 +230,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
             found: true,
             version: Some(version),
             path: Some(path),
-            can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
+            can_auto_install: def.npm_package.is_some() || def.install_script.is_some(),
             website: def.website.to_string(),
             native: def.native,
         };
@@ -229,7 +244,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
         found: false,
         version: None,
         path: None,
-        can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
+        can_auto_install: def.npm_package.is_some() || def.install_script.is_some(),
         website: def.website.to_string(),
         native: def.native,
     }
@@ -506,4 +521,14 @@ async fn resolve_npm_path() -> String {
         return path;
     }
     "npm".to_string()
+}
+
+async fn resolve_mise_path() -> String {
+    if let Some(path) = runtime_env::resolve_executable("mise") {
+        return path.display().to_string();
+    }
+    if let Some((path, _version)) = detect_via_login_shell("mise", "--version").await {
+        return path;
+    }
+    "mise".to_string()
 }

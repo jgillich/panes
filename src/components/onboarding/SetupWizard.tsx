@@ -187,6 +187,9 @@ function PlanPhase() {
     (!report.codex.found && report.codex.canAutoInstall);
 
   const nodeManual = getNodeManualGuidance(report);
+  const codexManualCommand = report.packageManagers.includes("mise")
+    ? "mise use -g npm:@openai/codex"
+    : "npm install -g @openai/codex";
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
@@ -310,7 +313,7 @@ function PlanPhase() {
             {!report.codex.found && (
               <ManualStep
                 label={t("manual.installCodex")}
-                command="npm install -g @openai/codex"
+                command={codexManualCommand}
               />
             )}
           </div>

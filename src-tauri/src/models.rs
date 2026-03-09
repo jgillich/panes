@@ -723,4 +723,5 @@ pub struct HarnessInfo {
 pub struct HarnessReport {
     pub harnesses: Vec<HarnessInfo>,
     pub npm_available: bool,
+    pub preferred_install_method: Option<String>,
 }

@@ -42,6 +42,10 @@ pub fn augmented_path_entries() -> Vec<PathBuf> {
     augmented_path_entries_for(home_dir().as_deref(), env::var_os("PATH").as_deref())
 }
 
+pub fn is_flatpak() -> bool {
+    env::var_os("FLATPAK_ID").is_some()
+}
+
 pub fn resolve_executable(binary: &str) -> Option<PathBuf> {
     let augmented_path = augmented_path()?;
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -173,6 +177,7 @@ fn augmented_path_entries_for(home: Option<&Path>, current_path: Option<&OsStr>)
     if let Some(home) = home {
         entries.push(home.join(".local/bin"));
         entries.push(home.join(".local/share/npm/bin"));
+        entries.push(home.join(".local/share/mise/shims"));
         entries.push(home.join(".npm-global/bin"));
         entries.push(home.join(".volta/bin"));
         entries.push(home.join(".local/share/fnm/aliases/default/bin"));
@@ -581,6 +586,7 @@ mod tests {
         let entries = augmented_path_entries_for(Some(home), Some(current_path));
 
         assert!(entries.contains(&home.join(".local/share/npm/bin")));
+        assert!(entries.contains(&home.join(".local/share/mise/shims")));
         assert!(entries.contains(&home.join(".npm-global/bin")));
         assert!(entries.contains(&home.join(".volta/bin")));
         assert!(entries.contains(&home.join(".local/share/fnm/aliases/default/bin")));
