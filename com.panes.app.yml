@@ -79,6 +79,7 @@ modules:
       - bin_path="$(find src-tauri/target/release -maxdepth 1 -type f -perm -111 \( -name 'Panes' -o -name 'panes' \) | head -n1)" && test -n "$bin_path" && install -Dm755 "$bin_path" /app/bin/Panes
       - install -Dm644 src-tauri/sidecar-dist/claude-agent-sdk-server.mjs /app/lib/Panes/sidecar-dist/claude-agent-sdk-server.mjs
       - install -Dm755 flatpak/panes-wrapper.sh /app/bin/panes-wrapper
+      - install -Dm644 flatpak/mise-env.sh /app/etc/profile.d/mise-env.sh
       - install -Dm644 flatpak/com.panes.app.desktop /app/share/applications/com.panes.app.desktop
       - install -Dm644 flatpak/com.panes.app.metainfo.xml /app/share/metainfo/com.panes.app.metainfo.xml
       - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/com.panes.app.png

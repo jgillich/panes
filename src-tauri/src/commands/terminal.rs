@@ -56,7 +56,15 @@ fn canonicalize_existing_dir(path: &str, label: &str) -> Result<PathBuf, String>
         return Err(format!("{label} does not exist: {path}"));
     }
 
+    if is_flatpak_document_portal_path(dir) {
+        return Ok(dir.to_path_buf());
+    }
+
     std::fs::canonicalize(dir).map_err(|error| format!("failed to resolve {label}: {error}"))
+}
+
+fn is_flatpak_document_portal_path(path: &Path) -> bool {
+    path.starts_with("/run/flatpak/doc")
 }
 
 #[tauri::command]

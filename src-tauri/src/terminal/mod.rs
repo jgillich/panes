@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
     path::{Path, PathBuf},
+    process::Command,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex,
@@ -1065,7 +1066,7 @@ fn spawn_session(
     let shell = default_shell();
     let mut cmd = CommandBuilder::new(shell.clone());
     cmd.cwd(PathBuf::from(&cwd));
-    let env_snapshot = configure_terminal_env(&mut cmd);
+    let env_snapshot = configure_terminal_env(&mut cmd, &cwd);
     #[cfg(not(target_os = "windows"))]
     {
         for arg in runtime_env::terminal_shell_args(Path::new(&shell)) {
@@ -1128,7 +1129,7 @@ fn default_shell() -> String {
     }
 }
 
-fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
+fn configure_terminal_env(cmd: &mut CommandBuilder, cwd: &str) -> TerminalEnvSnapshotDto {
     let inherited_term = read_non_empty_env("TERM");
     let term = match inherited_term.as_deref() {
         Some("dumb") | None => Some("xterm-256color".to_string()),
@@ -1151,7 +1152,7 @@ fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
     let lang = read_non_empty_env("LANG").or_else(|| Some("en_US.UTF-8".to_string()));
     let lc_ctype = read_non_empty_env("LC_CTYPE").or_else(|| lang.clone());
     let lc_all = read_non_empty_env("LC_ALL");
-    let path = build_terminal_path(home.as_deref()).or_else(|| read_non_empty_env("PATH"));
+    let path = mise_activated_path(cwd).or_else(|| build_terminal_path(home.as_deref())).or_else(|| read_non_empty_env("PATH"));
 
     if let Some(value) = term.as_deref() {
         cmd.env("TERM", value);
@@ -1219,6 +1220,47 @@ fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
         lc_ctype,
         path,
     }
+}
+
+fn mise_activated_path(cwd: &str) -> Option<String> {
+    if !runtime_env::is_flatpak() {
+        return None;
+    }
+
+    let mise = runtime_env::resolve_executable("mise")?;
+    let output = Command::new(&mise)
+        .arg("env")
+        .arg("-s")
+        .arg("bash")
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_exported_path(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_exported_path(stdout: &str) -> Option<String> {
+    stdout.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let value = trimmed
+            .strip_prefix("export PATH='")
+            .and_then(|rest| rest.strip_suffix('\''))
+            .or_else(|| {
+                trimmed
+                    .strip_prefix("export PATH=\"")
+                    .and_then(|rest| rest.strip_suffix('"'))
+            })?;
+
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    })
 }
 
 fn build_terminal_path(_home: Option<&str>) -> Option<String> {

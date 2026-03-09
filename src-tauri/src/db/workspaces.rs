@@ -16,15 +16,15 @@ pub fn upsert_workspace(
     scan_depth: Option<i64>,
 ) -> anyhow::Result<WorkspaceDto> {
     let conn = db.connect()?;
-    let canonical = Path::new(root_path)
-        .canonicalize()
-        .unwrap_or_else(|_| Path::new(root_path).to_path_buf());
-    let canonical = canonical.to_string_lossy().to_string();
+    let normalized = preserve_portal_path_or_canonicalize(Path::new(root_path));
+    let normalized = normalized.to_string_lossy().to_string();
+    let alternate = canonicalized_path_string(Path::new(root_path))
+        .filter(|candidate| candidate != &normalized);
 
     let existing = conn
         .query_row(
-            "SELECT id FROM workspaces WHERE root_path = ?1",
-            params![canonical],
+            "SELECT id FROM workspaces WHERE root_path = ?1 OR (?2 IS NOT NULL AND root_path = ?2)",
+            params![normalized, alternate],
             |row| row.get::<_, String>(0),
         )
         .optional()
@@ -34,24 +34,43 @@ pub fn upsert_workspace(
         conn.execute(
             "UPDATE workspaces
        SET last_opened_at = datetime('now'),
+           root_path = ?3,
            scan_depth = COALESCE(?2, scan_depth),
            archived_at = NULL
        WHERE id = ?1",
-            params![id, scan_depth],
+            params![id, scan_depth, normalized],
         )
         .context("failed to update workspace last_opened_at")?;
     } else {
         let id = Uuid::new_v4().to_string();
-        let name = workspace_name_from_path(&canonical);
+        let name = workspace_name_from_path(&normalized);
         let scan_depth = scan_depth.unwrap_or(DEFAULT_SCAN_DEPTH);
         conn.execute(
             "INSERT INTO workspaces (id, name, root_path, scan_depth) VALUES (?1, ?2, ?3, ?4)",
-            params![id, name, canonical, scan_depth],
+            params![id, name, normalized, scan_depth],
         )
         .context("failed to insert workspace")?;
     }
 
-    get_workspace_by_root(&conn, &canonical)
+    get_workspace_by_root(&conn, &normalized)
+}
+
+fn preserve_portal_path_or_canonicalize(path: &Path) -> std::path::PathBuf {
+    if is_flatpak_document_portal_path(path) {
+        return path.to_path_buf();
+    }
+
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn canonicalized_path_string(path: &Path) -> Option<String> {
+    path.canonicalize()
+        .ok()
+        .map(|value| value.to_string_lossy().to_string())
+}
+
+fn is_flatpak_document_portal_path(path: &Path) -> bool {
+    path.starts_with("/run/flatpak/doc")
 }
 
 pub fn list_workspaces(db: &Database) -> anyhow::Result<Vec<WorkspaceDto>> {
